@@ -74,8 +74,10 @@
     inset: 0;
     width: 100%; height: 100%;
     object-fit: cover;
-    transform: scaleX(-1); /* 镜像，方便小孩看自己 */
+    transform: scaleX(-1); /* 默认镜像，方便自拍时看自己 */
   }
+  /* 后置摄像头不需要镜像 */
+  #video.rear, #canvas.rear { transform: none; }
   #canvas { background: transparent; }
   .camera-mask {
     position: absolute;
@@ -375,6 +377,46 @@
     display: none;
   }
   .mode-tag.active { display: block; }
+
+  /* 摄像头切换按钮 */
+  .cam-switch {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    z-index: 8;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    background: rgba(0,0,0,.55);
+    border: 1.5px solid rgba(255,255,255,.7);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    backdrop-filter: blur(6px);
+    transition: background .15s, transform .15s;
+  }
+  .cam-switch:active { transform: scale(.92); background: rgba(0,0,0,.75); }
+  .cam-switch svg { width: 22px; height: 22px; fill: #fff; }
+  .cam-switch.hidden { display: none; }
+  .cam-switch-tip {
+    position: absolute;
+    top: 64px;
+    right: 14px;
+    z-index: 8;
+    background: rgba(0,0,0,.6);
+    color: #fff;
+    padding: 3px 8px;
+    border-radius: 8px;
+    font-size: 11px;
+    opacity: 0;
+    transition: opacity .2s;
+    pointer-events: none;
+    white-space: nowrap;
+  }
+  .cam-switch-tip.show { opacity: .9; }
 </style>
 </head>
 <body>
@@ -411,6 +453,10 @@
         </div>
         <p>请允许使用摄像头<br>站在镜头前 1.5 米左右<br>全身入镜效果最佳</p>
       </div>
+      <button class="cam-switch hidden" id="camSwitch" aria-label="切换摄像头">
+        <svg viewBox="0 0 24 24"><path d="M9 3l-1.83 2H16c2.21 0 4 1.79 4 4v3h2v-3c0-3.31-2.69-6-6-6H7.17L9 3zM6 7l-3 3 3 3v-2h11c2.21 0 4 1.79 4 4v3h-2v-3c0-.55-.45-1-1-1H6v-2L3 10l3-3z"/></svg>
+      </button>
+      <div class="cam-switch-tip" id="camSwitchTip">后置镜头</div>
     </div>
 
     <div class="controls">
@@ -466,6 +512,8 @@
     const cameraMask = document.getElementById('cameraMask');
     const startBtn = document.getElementById('startBtn');
     const stopBtn = document.getElementById('stopBtn');
+    const camSwitch = document.getElementById('camSwitch');
+    const camSwitchTip = document.getElementById('camSwitchTip');
     const checkInBtn = document.getElementById('checkInBtn');
     const streakDays = document.getElementById('streakDays');
     const todayJumpsEl = document.getElementById('todayJumps');
@@ -487,6 +535,8 @@
     let startTime = 0;
     let timerId = null;
     let lastDemoTapTime = 0;
+    // 摄像头方向：'user'=前置自拍，'environment'=后置
+    let currentFacingMode = 'environment'; // 默认后置，更适合拍小孩子跳绳
 
     // 跳绳检测状态
     let poseState = 'idle'; // idle / up
@@ -786,9 +836,9 @@
           if (res.state === 'denied') throw new Error('denied');
         } catch (e) { /* 部分浏览器不支持 camera 权限查询，忽略 */ }
       }
-      // 用最低分辨率真请求一次，触发权限弹窗
+      // 用最低分辨率真请求一次，触发权限弹窗（使用当前选择的方向）
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'user' }, audio: false
+        video: { facingMode: currentFacingMode }, audio: false
       });
       // 立即释放，交给 MediaPipe Camera 重新管理
       stream.getTracks().forEach(t => t.stop());
@@ -853,7 +903,7 @@
             },
             width: 480,
             height: 640,
-            facingMode: 'user'
+            facingMode: currentFacingMode
           });
           await camera.start();
         }
@@ -864,6 +914,13 @@
         return;
       }
       cameraMask.classList.add('hidden');
+      camSwitch.classList.remove('hidden');
+      updateCamSwitchTip();
+      // 默认后置摄像头不镜像
+      if (currentFacingMode === 'environment') {
+        video.classList.add('rear');
+        canvas.classList.add('rear');
+      }
       jumpCount = 0;
       countNum.textContent = '0';
       baselineBuffer = [];
@@ -906,6 +963,63 @@
     startBtn.addEventListener('click', startSession);
     stopBtn.addEventListener('click', endSession);
     document.getElementById('demoBtn').addEventListener('click', startDemoSession);
+
+    // ============== 切换摄像头 ==============
+    function updateCamSwitchTip() {
+      camSwitchTip.textContent = currentFacingMode === 'user' ? '前置镜头（自拍）' : '后置镜头';
+    }
+
+    async function switchCamera() {
+      // 切换方向
+      currentFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
+      // 切换镜像（前置镜像，后置不镜像）
+      if (currentFacingMode === 'environment') {
+        video.classList.add('rear');
+        canvas.classList.add('rear');
+      } else {
+        video.classList.remove('rear');
+        canvas.classList.remove('rear');
+      }
+      // 提示
+      camSwitchTip.textContent = currentFacingMode === 'user' ? '前置镜头（自拍）' : '后置镜头';
+      camSwitchTip.classList.add('show');
+      setTimeout(() => camSwitchTip.classList.remove('show'), 1200);
+
+      // 释放旧的 MediaPipe Camera
+      try {
+        if (camera) {
+          // MediaPipe CameraUtils 没有 stop()，直接停 stream
+          const stream = video.srcObject;
+          if (stream) stream.getTracks().forEach(t => t.stop());
+          video.srcObject = null;
+          camera = null;
+        }
+      } catch (e) { console.warn('旧摄像头释放失败', e); }
+
+      // 重新请求新方向的 stream
+      try {
+        const newStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: currentFacingMode }, audio: false
+        });
+        video.srcObject = newStream;
+        await video.play().catch(() => {});
+        // 不重建 MediaPipe Camera 的 onFrame 循环，改用 requestVideoFrame 兜底
+        // （MediaPipe CameraUtils 在切 stream 后不一定能自动续帧，用 rAF 保险）
+        if (!camera) {
+          const sendFrame = async () => {
+            if (running && video.readyState >= 2) {
+              try { await pose.send({ image: video }); } catch (e) {}
+            }
+            if (running) requestAnimationFrame(sendFrame);
+          };
+          requestAnimationFrame(sendFrame);
+        }
+      } catch (e) {
+        showCameraError(e);
+        console.error('切换摄像头失败', e);
+      }
+    }
+    camSwitch.addEventListener('click', switchCamera);
 
     // ============== 演示模式 ==============
     function startDemoSession() {
