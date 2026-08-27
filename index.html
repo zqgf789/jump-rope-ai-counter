@@ -1,0 +1,975 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#667eea">
+<title>跳绳 AI 计数器</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: linear-gradient(160deg, #667eea 0%, #764ba2 60%, #f093fb 100%);
+    color: #fff;
+    min-height: 100vh;
+    overflow-x: hidden;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  .app {
+    max-width: 520px;
+    margin: 0 auto;
+    padding: 14px 14px 30px;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 4px;
+  }
+  header h1 {
+    font-size: 22px;
+    font-weight: 800;
+    letter-spacing: 1px;
+    text-shadow: 0 2px 6px rgba(0,0,0,.25);
+  }
+  .streak-badge {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(255,255,255,.18);
+    backdrop-filter: blur(6px);
+    padding: 6px 12px;
+    border-radius: 20px;
+    font-size: 13px;
+    font-weight: 600;
+    border: 1px solid rgba(255,255,255,.25);
+  }
+  .streak-badge .flame {
+    width: 16px; height: 16px;
+    background: radial-gradient(circle at 50% 60%, #ffd93d, #ff6b6b);
+    border-radius: 50% 50% 50% 50% / 60% 60% 40% 40%;
+    box-shadow: 0 0 8px rgba(255,180,0,.8);
+  }
+
+  /* 摄像头区 */
+  .camera-wrap {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 3 / 4;
+    border-radius: 22px;
+    overflow: hidden;
+    background: #000;
+    box-shadow: 0 14px 36px rgba(0,0,0,.35);
+    border: 3px solid rgba(255,255,255,.35);
+  }
+  #video, #canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%; height: 100%;
+    object-fit: cover;
+    transform: scaleX(-1); /* 镜像，方便小孩看自己 */
+  }
+  #canvas { background: transparent; }
+  .camera-mask {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    background: linear-gradient(160deg, rgba(102,126,234,.85), rgba(118,75,162,.85));
+    z-index: 5;
+    text-align: center;
+    padding: 20px;
+  }
+  .camera-mask.hidden { display: none; }
+  .camera-mask .icon-cam {
+    width: 64px; height: 64px;
+    border-radius: 50%;
+    background: rgba(255,255,255,.2);
+    display: flex; align-items: center; justify-content: center;
+    border: 2px solid rgba(255,255,255,.5);
+  }
+  .camera-mask .icon-cam svg { width: 32px; height: 32px; fill: #fff; }
+  .camera-mask p { font-size: 14px; opacity: .95; line-height: 1.5; max-width: 280px; }
+
+  /* 计数大数字 */
+  .count-overlay {
+    position: absolute;
+    top: 16px; left: 16px;
+    z-index: 4;
+    background: rgba(0,0,0,.4);
+    backdrop-filter: blur(8px);
+    border-radius: 16px;
+    padding: 8px 16px;
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
+    border: 1px solid rgba(255,255,255,.2);
+  }
+  .count-overlay .num {
+    font-size: 42px;
+    font-weight: 900;
+    line-height: 1;
+    color: #fff;
+    text-shadow: 0 2px 8px rgba(0,0,0,.5);
+    font-variant-numeric: tabular-nums;
+  }
+  .count-overlay .unit { font-size: 14px; opacity: .85; }
+  .timer-overlay {
+    position: absolute;
+    top: 16px; right: 16px;
+    z-index: 4;
+    background: rgba(0,0,0,.4);
+    backdrop-filter: blur(8px);
+    border-radius: 14px;
+    padding: 8px 14px;
+    font-size: 18px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    border: 1px solid rgba(255,255,255,.2);
+  }
+  .status-tip {
+    position: absolute;
+    bottom: 14px; left: 50%;
+    transform: translateX(-50%);
+    z-index: 4;
+    background: rgba(0,0,0,.45);
+    color: #fff;
+    padding: 6px 14px;
+    border-radius: 14px;
+    font-size: 12px;
+    white-space: nowrap;
+    max-width: 90%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* 按钮 */
+  .controls {
+    display: flex;
+    gap: 10px;
+  }
+  .btn {
+    flex: 1;
+    border: none;
+    border-radius: 16px;
+    padding: 16px 0;
+    font-size: 17px;
+    font-weight: 700;
+    color: #fff;
+    cursor: pointer;
+    transition: transform .1s, box-shadow .2s;
+    letter-spacing: 1px;
+  }
+  .btn:active { transform: scale(.97); }
+  .btn-primary {
+    background: linear-gradient(135deg, #ff6b6b, #ee0979);
+    box-shadow: 0 8px 20px rgba(238,9,121,.35);
+  }
+  .btn-secondary {
+    background: linear-gradient(135deg, #43cea2, #185a9d);
+    box-shadow: 0 8px 20px rgba(24,90,157,.3);
+  }
+  .btn:disabled {
+    background: #555;
+    box-shadow: none;
+    opacity: .55;
+    cursor: not-allowed;
+  }
+  .btn-checkin {
+    background: linear-gradient(135deg, #f7971e, #ffd200);
+    color: #5a3a00;
+    box-shadow: 0 8px 20px rgba(247,151,30,.4);
+  }
+  .btn-checkin.done {
+    background: linear-gradient(135deg, #bdc3c7, #2c3e50);
+    color: #fff;
+  }
+
+  /* 数据卡片 */
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+  }
+  .stat-card {
+    background: rgba(255,255,255,.13);
+    backdrop-filter: blur(6px);
+    border-radius: 14px;
+    padding: 12px 6px;
+    text-align: center;
+    border: 1px solid rgba(255,255,255,.18);
+  }
+  .stat-card .val {
+    font-size: 22px;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+  }
+  .stat-card .lbl { font-size: 11px; opacity: .8; margin-top: 2px; }
+
+  /* 徽章 */
+  .badges-title { font-size: 14px; opacity: .9; padding: 0 4px; font-weight: 600; }
+  .badges {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding: 4px;
+    -webkit-overflow-scrolling: touch;
+  }
+  .badge {
+    min-width: 64px;
+    flex: 0 0 auto;
+    background: rgba(255,255,255,.1);
+    border-radius: 12px;
+    padding: 10px 6px;
+    text-align: center;
+    border: 1px solid rgba(255,255,255,.15);
+    opacity: .45;
+    transition: all .2s;
+  }
+  .badge.unlocked {
+    background: linear-gradient(135deg, rgba(255,215,0,.35), rgba(255,140,0,.35));
+    border-color: rgba(255,215,0,.6);
+    opacity: 1;
+    box-shadow: 0 4px 14px rgba(255,180,0,.3);
+  }
+  .badge .star {
+    width: 28px; height: 28px;
+    margin: 0 auto 4px;
+  }
+  .badge .name { font-size: 11px; font-weight: 600; }
+  .badge .cond { font-size: 10px; opacity: .8; margin-top: 2px; }
+
+  /* Toast */
+  .toast {
+    position: fixed;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%) scale(.8);
+    background: rgba(0,0,0,.85);
+    color: #fff;
+    padding: 16px 24px;
+    border-radius: 16px;
+    font-size: 16px;
+    font-weight: 700;
+    z-index: 100;
+    opacity: 0;
+    pointer-events: none;
+    transition: all .25s;
+    text-align: center;
+    max-width: 80%;
+  }
+  .toast.show {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+
+  /* Loading */
+  .loading {
+    position: fixed; inset: 0;
+    background: linear-gradient(160deg, #667eea, #764ba2);
+    z-index: 200;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 20px;
+    transition: opacity .3s;
+  }
+  .loading.hide { opacity: 0; pointer-events: none; }
+  .spinner {
+    width: 48px; height: 48px;
+    border: 4px solid rgba(255,255,255,.3);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .loading p { font-size: 15px; opacity: .95; }
+
+  /* 浮动数字效果 */
+  .float-num {
+    position: absolute;
+    color: #ffd93d;
+    font-size: 28px;
+    font-weight: 900;
+    text-shadow: 0 2px 6px rgba(0,0,0,.5);
+    pointer-events: none;
+    z-index: 6;
+    animation: floatUp 1s ease-out forwards;
+  }
+  @keyframes floatUp {
+    0% { transform: translateY(0) scale(1); opacity: 1; }
+    100% { transform: translateY(-60px) scale(1.4); opacity: 0; }
+  }
+
+  /* 演示模式 */
+  .demo-overlay {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(160deg, #1a1a2e, #16213e);
+    z-index: 3;
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  .demo-overlay.active { display: flex; }
+  .demo-overlay .tap-hint {
+    font-size: 18px;
+    font-weight: 700;
+    color: rgba(255,255,255,.9);
+    margin-bottom: 10px;
+  }
+  .demo-overlay .tap-icon {
+    width: 72px; height: 72px;
+    border-radius: 50%;
+    background: rgba(255,255,255,.12);
+    border: 3px solid rgba(255,215,61,.7);
+    display: flex; align-items: center; justify-content: center;
+    animation: pulse 1.2s ease-in-out infinite;
+  }
+  .demo-overlay .tap-icon svg { width: 36px; height: 36px; fill: #ffd93d; }
+  .demo-overlay .tap-sub {
+    font-size: 13px;
+    color: rgba(255,255,255,.6);
+    margin-top: 10px;
+  }
+  .demo-overlay .tap-counter {
+    font-size: 64px;
+    font-weight: 900;
+    color: #ffd93d;
+    text-shadow: 0 2px 14px rgba(255,215,61,.4);
+    font-variant-numeric: tabular-nums;
+    margin-bottom: 6px;
+  }
+  .demo-overlay.tapped .tap-icon {
+    transform: scale(.85);
+    background: rgba(255,215,61,.25);
+  }
+  @keyframes pulse {
+    0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255,215,61,.5); }
+    50% { transform: scale(1.06); box-shadow: 0 0 0 16px rgba(255,215,61,0); }
+  }
+  .mode-tag {
+    position: absolute;
+    top: 16px; left: 50%;
+    transform: translateX(-50%);
+    z-index: 7;
+    background: rgba(255,107,107,.9);
+    color: #fff;
+    padding: 4px 12px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    display: none;
+  }
+  .mode-tag.active { display: block; }
+</style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <h1>跳绳 AI 计数器</h1>
+      <div class="streak-badge">
+        <span class="flame"></span>
+        <span id="streakDays">0</span> 天
+      </div>
+    </header>
+
+    <div class="camera-wrap">
+      <video id="video" playsinline muted></video>
+      <canvas id="canvas"></canvas>
+      <div class="count-overlay">
+        <span class="num" id="countNum">0</span>
+        <span class="unit">个</span>
+      </div>
+      <div class="timer-overlay" id="timerOverlay">00:00</div>
+      <div class="status-tip" id="statusTip">点击下方按钮，开始跳绳吧</div>
+      <div class="mode-tag" id="modeTag">演示模式</div>
+      <div class="demo-overlay" id="demoOverlay">
+        <div class="tap-counter" id="demoCounter">0</div>
+        <div class="tap-hint">点击屏幕 = 跳一次</div>
+        <div class="tap-icon">
+          <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
+        </div>
+        <div class="tap-sub">每点一下算跳一次，保持节奏哦！</div>
+      </div>
+      <div class="camera-mask" id="cameraMask">
+        <div class="icon-cam">
+          <svg viewBox="0 0 24 24"><path d="M9 4h6l1.5 2H20a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h3.5L9 4zm3 5a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm0 2a2 2 0 1 1 0 4 2 2 0 0 1 0-4z"/></svg>
+        </div>
+        <p>请允许使用摄像头<br>站在镜头前 1.5 米左右<br>全身入镜效果最佳</p>
+      </div>
+    </div>
+
+    <div class="controls">
+      <button id="startBtn" class="btn btn-primary">开始跳绳</button>
+      <button id="stopBtn" class="btn btn-secondary" disabled>结束</button>
+    </div>
+    <div style="display:flex; gap:10px;">
+      <button id="demoBtn" class="btn" style="background:linear-gradient(135deg,#a18cd1,#fbc2eb);color:#fff;box-shadow:0 8px 20px rgba(161,140,209,.35);">演示模式（手动计数）</button>
+    </div>
+
+    <div class="stats">
+      <div class="stat-card">
+        <div class="val" id="todayJumps">0</div>
+        <div class="lbl">今日总数</div>
+      </div>
+      <div class="stat-card">
+        <div class="val" id="totalJumps">0</div>
+        <div class="lbl">累计总数</div>
+      </div>
+      <div class="stat-card">
+        <div class="val" id="bestRecord">0</div>
+        <div class="lbl">单次最高</div>
+      </div>
+    </div>
+
+    <div style="display:flex; gap:10px;">
+      <button id="checkInBtn" class="btn btn-checkin">今日打卡</button>
+    </div>
+
+    <div class="badges-title">成就徽章</div>
+    <div class="badges" id="badges"></div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+  <div class="loading" id="loading">
+    <div class="spinner"></div>
+    <p>AI 模型加载中...<br>首次约需 5-10 秒</p>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5/pose.js" crossorigin="anonymous"></script>
+  <script>
+  (function () {
+    'use strict';
+
+    // ============== 元素引用 ==============
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const countNum = document.getElementById('countNum');
+    const timerOverlay = document.getElementById('timerOverlay');
+    const statusTip = document.getElementById('statusTip');
+    const cameraMask = document.getElementById('cameraMask');
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const checkInBtn = document.getElementById('checkInBtn');
+    const streakDays = document.getElementById('streakDays');
+    const todayJumpsEl = document.getElementById('todayJumps');
+    const totalJumpsEl = document.getElementById('totalJumps');
+    const bestRecordEl = document.getElementById('bestRecord');
+    const badgesEl = document.getElementById('badges');
+    const toast = document.getElementById('toast');
+    const loading = document.getElementById('loading');
+    const demoOverlay = document.getElementById('demoOverlay');
+    const demoCounter = document.getElementById('demoCounter');
+    const modeTag = document.getElementById('modeTag');
+
+    // ============== 状态 ==============
+    let pose = null;
+    let camera = null;
+    let running = false;
+    let demoMode = false;
+    let jumpCount = 0;
+    let startTime = 0;
+    let timerId = null;
+    let lastDemoTapTime = 0;
+
+    // 跳绳检测状态
+    let poseState = 'idle'; // idle / up
+    let baselineBuffer = [];
+    const BASELINE_SIZE = 40;       // 约 1.5s 的滑动窗口用于估计站立基线
+    const JUMP_THRESHOLD = 0.035;   // 跳起的高度阈值（归一化 Y）
+    const LAND_THRESHOLD = 0.015;   // 落地回弹阈值
+    let lastJumpTime = 0;
+    const MIN_JUMP_INTERVAL = 250;  // 防抖：两次跳绳最短间隔 ms
+
+    // ============== 工具 ==============
+    function showToast(msg, duration) {
+      toast.textContent = msg;
+      toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), duration || 1500);
+    }
+
+    function formatDate(d) {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return y + '-' + m + '-' + day;
+    }
+
+    // 简单蜂鸣音
+    let audioCtx = null;
+    function beep(freq) {
+      try {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const o = audioCtx.createOscillator();
+        const g = audioCtx.createGain();
+        o.frequency.value = freq || 880;
+        o.type = 'sine';
+        g.gain.setValueAtTime(0.18, audioCtx.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.12);
+        o.connect(g); g.connect(audioCtx.destination);
+        o.start();
+        o.stop(audioCtx.currentTime + 0.12);
+      } catch (e) {}
+    }
+
+    // ============== 数据持久化 ==============
+    const STORE_KEY = 'jumpRopeData_v1';
+    function loadData() {
+      try {
+        return JSON.parse(localStorage.getItem(STORE_KEY)) || defaultData();
+      } catch (e) { return defaultData(); }
+    }
+    function saveData(d) {
+      try { localStorage.setItem(STORE_KEY, JSON.stringify(d)); } catch (e) {}
+    }
+    function defaultData() {
+      return {
+        lastCheckIn: '',     // YYYY-MM-DD
+        streak: 0,
+        bestStreak: 0,
+        totalJumps: 0,
+        bestRecord: 0,
+        dailyJumps: {}       // { 'YYYY-MM-DD': 数量 }
+      };
+    }
+    let data = loadData();
+
+    function refreshStats() {
+      const today = formatDate(new Date());
+      streakDays.textContent = data.streak;
+      todayJumpsEl.textContent = data.dailyJumps[today] || 0;
+      totalJumpsEl.textContent = data.totalJumps;
+      bestRecordEl.textContent = data.bestRecord;
+      renderBadges();
+      updateCheckInBtn();
+    }
+
+    // ============== 徽章定义 ==============
+    const BADGES = [
+      { id: 'first',     name: '初次尝试', cond: '完成 1 次跳绳',     check: d => d.totalJumps >= 1 },
+      { id: 'day3',      name: '坚持 3 天', cond: '连续打卡 3 天',     check: d => d.bestStreak >= 3 },
+      { id: 'day7',      name: '一周达人', cond: '连续打卡 7 天',     check: d => d.bestStreak >= 7 },
+      { id: 'day21',     name: '习惯养成', cond: '连续打卡 21 天',    check: d => d.bestStreak >= 21 },
+      { id: 'jumps100',  name: '百下达人', cond: '累计 100 下',      check: d => d.totalJumps >= 100 },
+      { id: 'jumps1000', name: '千下勇士', cond: '累计 1000 下',     check: d => d.totalJumps >= 1000 },
+      { id: 'single50',  name: '单次 50',  cond: '单次跳 50 下',      check: d => d.bestRecord >= 50 },
+      { id: 'single100', name: '单次百下', cond: '单次跳 100 下',    check: d => d.bestRecord >= 100 }
+    ];
+
+    function starSVG(filled) {
+      const fill = filled ? '#FFD93D' : 'rgba(255,255,255,.4)';
+      return '<svg class="star" viewBox="0 0 24 24"><path fill="' + fill + '" d="M12 2l2.9 6.1 6.6.9-4.8 4.7 1.2 6.6L12 17.9 6.1 20.3l1.2-6.6L2.5 9l6.6-.9z"/></svg>';
+    }
+
+    function renderBadges() {
+      badgesEl.innerHTML = '';
+      BADGES.forEach(b => {
+        const unlocked = b.check(data);
+        const el = document.createElement('div');
+        el.className = 'badge' + (unlocked ? ' unlocked' : '');
+        el.innerHTML = starSVG(unlocked) +
+          '<div class="name">' + b.name + '</div>' +
+          '<div class="cond">' + b.cond + '</div>';
+        badgesEl.appendChild(el);
+      });
+    }
+
+    // ============== 打卡 ==============
+    function updateCheckInBtn() {
+      const today = formatDate(new Date());
+      if (data.lastCheckIn === today) {
+        checkInBtn.textContent = '今日已打卡';
+        checkInBtn.classList.add('done');
+        checkInBtn.disabled = true;
+      } else {
+        checkInBtn.textContent = '今日打卡';
+        checkInBtn.classList.remove('done');
+        checkInBtn.disabled = false;
+      }
+    }
+
+    function doCheckIn() {
+      const today = formatDate(new Date());
+      if (data.lastCheckIn === today) {
+        showToast('今天已经打卡啦');
+        return;
+      }
+      // 判断是否连续
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      const yKey = formatDate(yesterday);
+      if (data.lastCheckIn === yKey) {
+        data.streak += 1;
+      } else {
+        data.streak = 1;
+      }
+      data.lastCheckIn = today;
+      if (data.streak > data.bestStreak) data.bestStreak = data.streak;
+      saveData(data);
+      refreshStats();
+      showToast('打卡成功！连续 ' + data.streak + ' 天', 1800);
+      beep(660); setTimeout(beep, 120, 880); setTimeout(beep, 240, 1100);
+    }
+    checkInBtn.addEventListener('click', doCheckIn);
+
+    // ============== 计时 ==============
+    function fmtTime(ms) {
+      const s = Math.floor(ms / 1000);
+      const m = Math.floor(s / 60);
+      const sec = s % 60;
+      return String(m).padStart(2, '0') + ':' + String(sec).padStart(2, '0');
+    }
+    function updateTimer() {
+      if (!running) return;
+      timerOverlay.textContent = fmtTime(Date.now() - startTime);
+    }
+
+    // ============== 计数核心 ==============
+    function onResults(results) {
+      if (!results.poseLandmarks) {
+        statusTip.textContent = '请站到镜头前，全身可见';
+        return;
+      }
+      drawPose(results);
+
+      const lm = results.poseLandmarks;
+      const leftHip = lm[23];
+      const rightHip = lm[24];
+      const leftShoulder = lm[11];
+      const rightShoulder = lm[12];
+
+      // 用肩与髋的中点作为身体中心 Y，更稳定
+      const cy = (leftHip.y + rightHip.y + leftShoulder.y + rightShoulder.y) / 4;
+      const visOk = (leftHip.visibility + rightHip.visibility +
+                     leftShoulder.visibility + rightShoulder.visibility) / 4;
+      if (visOk < 0.5) {
+        statusTip.textContent = '请确保身体在镜头中央';
+        return;
+      }
+
+      // 滑动基线
+      baselineBuffer.push(cy);
+      if (baselineBuffer.length > BASELINE_SIZE) baselineBuffer.shift();
+      const baseline = baselineBuffer.reduce((a, b) => a + b, 0) / baselineBuffer.length;
+
+      const now = performance.now();
+      if (poseState === 'idle' && cy < baseline - JUMP_THRESHOLD) {
+        // 起跳：Y 变小（向上）
+        poseState = 'up';
+      } else if (poseState === 'up' && cy > baseline - LAND_THRESHOLD) {
+        // 落地：Y 回升到基线附近
+        poseState = 'idle';
+        if (now - lastJumpTime > MIN_JUMP_INTERVAL) {
+          lastJumpTime = now;
+          jumpCount++;
+          countNum.textContent = jumpCount;
+          beep(880 + Math.min(jumpCount * 5, 600));
+          spawnFloatNum();
+          // 里程碑提示
+          if (jumpCount === 10) showToast('加油！10 个啦');
+          else if (jumpCount === 50) { showToast('太棒了！50 个'); beep(1100); }
+          else if (jumpCount === 100) { showToast('超厉害！100 个！', 2000); beep(1320); }
+          else if (jumpCount === 200) { showToast('200 个！跳绳小达人！', 2000); beep(1500); }
+        }
+      }
+      if (running) {
+        statusTip.textContent = '检测中…保持节奏，加油！';
+      }
+    }
+
+    function spawnFloatNum() {
+      const n = document.createElement('div');
+      n.className = 'float-num';
+      n.textContent = '+1';
+      n.style.left = (12 + Math.random() * 20) + 'px';
+      n.style.top = (30 + Math.random() * 20) + 'px';
+      document.querySelector('.camera-wrap').appendChild(n);
+      setTimeout(() => n.remove(), 1000);
+    }
+
+    // ============== 绘制骨架 ==============
+    const POSE_CONNECTIONS = [
+      [11,12],[11,13],[13,15],[12,14],[14,16],
+      [11,23],[12,24],[23,24],[23,25],[24,26],
+      [25,27],[26,28],[27,29],[28,30],[29,31],[30,32]
+    ];
+    function drawPose(results) {
+      ctx.save();
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      // 由于 video 做了 scaleX(-1) 镜像，canvas 也要镜像保持一致
+      ctx.translate(canvas.width, 0);
+      ctx.scale(-1, 1);
+      const lm = results.poseLandmarks;
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = '#43e97b';
+      ctx.shadowColor = 'rgba(0,0,0,.4)';
+      ctx.shadowBlur = 4;
+      POSE_CONNECTIONS.forEach(([a, b]) => {
+        const pa = lm[a], pb = lm[b];
+        if (pa.visibility > 0.3 && pb.visibility > 0.3) {
+          ctx.beginPath();
+          ctx.moveTo(pa.x * canvas.width, pa.y * canvas.height);
+          ctx.lineTo(pb.x * canvas.width, pb.y * canvas.height);
+          ctx.stroke();
+        }
+      });
+      ctx.fillStyle = '#ffd93d';
+      lm.forEach((p, i) => {
+        if (p.visibility > 0.3 && [0,11,12,23,24,13,14,25,26,15,16,27,28].indexOf(i) >= 0) {
+          ctx.beginPath();
+          ctx.arc(p.x * canvas.width, p.y * canvas.height, 5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      });
+      ctx.restore();
+    }
+
+    // ============== MediaPipe 初始化 ==============
+    async function initPose() {
+      if (pose) return;
+      pose = new window.Pose({
+        locateFile: (file) => 'https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5/' + file
+      });
+      pose.setOptions({
+        modelComplexity: 1,
+        smoothLandmarks: true,
+        enableSegmentation: false,
+        minDetectionConfidence: 0.5,
+        minTrackingConfidence: 0.5
+      });
+      pose.onResults(onResults);
+    }
+
+    function resizeCanvas() {
+      const rect = canvas.getBoundingClientRect();
+      canvas.width = rect.width;
+      canvas.height = rect.height;
+    }
+    window.addEventListener('resize', resizeCanvas);
+
+    // ============== 开始 / 结束 ==============
+    // ============== 摄像头权限预检 ==============
+    function isSecureContext() {
+      return window.isSecureContext ||
+             location.hostname === 'localhost' ||
+             location.hostname === '127.0.0.1';
+    }
+
+    // 先单独探一下权限/设备是否可用，避免和 Pose 初始化混在一起难定位
+    async function probeCamera() {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error('unsupported'); // 浏览器不支持
+      }
+      if (!isSecureContext()) {
+        throw new Error('notsecure'); // 非 HTTPS/非 localhost
+      }
+      // 先看权限状态（部分浏览器支持 Permissions API）
+      if (navigator.permissions && navigator.permissions.query) {
+        try {
+          const res = await navigator.permissions.query({ name: 'camera' });
+          if (res.state === 'denied') throw new Error('denied');
+        } catch (e) { /* 部分浏览器不支持 camera 权限查询，忽略 */ }
+      }
+      // 用最低分辨率真请求一次，触发权限弹窗
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'user' }, audio: false
+      });
+      // 立即释放，交给 MediaPipe Camera 重新管理
+      stream.getTracks().forEach(t => t.stop());
+      return true;
+    }
+
+    function showCameraError(err) {
+      const mask = cameraMask;
+      mask.classList.remove('hidden');
+      let title = '', tip = '';
+      if (err === 'denied' || (err && err.name === 'NotAllowedError')) {
+        title = '摄像头权限被拒绝';
+        tip = '请在外部浏览器打开本页，或使用下方演示模式';
+      } else if (err === 'notsecure') {
+        title = '需要 HTTPS 才能使用摄像头';
+        tip = '请通过 https:// 访问本页，或使用下方演示模式';
+      } else if (err === 'unsupported' || (err && err.name === 'NotFoundError')) {
+        title = '未检测到摄像头';
+        tip = '设备没有可用摄像头，请使用下方演示模式';
+      } else if (err && (err.name === 'NotReadableError')) {
+        title = '摄像头被占用';
+        tip = '请关闭其他占用摄像头的应用，或使用下方演示模式';
+      } else {
+        title = '摄像头无法启动';
+        tip = '可使用下方演示模式体验';
+      }
+      mask.innerHTML =
+        '<div class="icon-cam"><svg viewBox="0 0 24 24"><path fill="#ff6b6b" d="M12 2L1 21h22L12 2zm0 4.5L19.5 19h-15L12 6.5zM11 10v5h2v-5h-2zm0 6v2h2v-2h-2z"/></svg></div>' +
+        '<p style="font-size:16px;font-weight:700;margin-bottom:4px">' + title + '</p>' +
+        '<p style="margin-bottom:10px">' + tip + '</p>' +
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center">' +
+        '<button class="btn btn-primary" style="max-width:160px" onclick="location.reload()">重新加载</button>' +
+        '<button class="btn btn-secondary" style="max-width:160px" id="tryDemoBtn">演示模式</button>' +
+        '</div>';
+      statusTip.textContent = title;
+      setTimeout(() => {
+        const btn = document.getElementById('tryDemoBtn');
+        if (btn) btn.addEventListener('click', startDemoSession);
+      }, 50);
+    }
+
+    async function startSession() {
+      if (running) return;
+      demoMode = false;
+      demoOverlay.classList.remove('active');
+      modeTag.classList.remove('active');
+      // 1) 先做权限/设备预检
+      try {
+        await probeCamera();
+      } catch (e) {
+        showCameraError(e);
+        console.error('摄像头预检失败', e);
+        return;
+      }
+      // 2) 预检通过，再启动 Pose + Camera
+      try {
+        await initPose();
+        if (!camera) {
+          camera = new window.Camera(video, {
+            onFrame: async () => {
+              if (running) await pose.send({ image: video });
+            },
+            width: 480,
+            height: 640,
+            facingMode: 'user'
+          });
+          await camera.start();
+        }
+        resizeCanvas();
+      } catch (e) {
+        showCameraError(e);
+        console.error(e);
+        return;
+      }
+      cameraMask.classList.add('hidden');
+      jumpCount = 0;
+      countNum.textContent = '0';
+      baselineBuffer = [];
+      poseState = 'idle';
+      startTime = Date.now();
+      running = true;
+      startBtn.disabled = true;
+      stopBtn.disabled = false;
+      timerOverlay.textContent = '00:00';
+      timerId = setInterval(updateTimer, 200);
+      statusTip.textContent = '检测中…保持节奏，加油！';
+      // 解锁音频上下文（移动端需要用户手势）
+      if (!audioCtx) { try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} }
+      else if (audioCtx.state === 'suspended') audioCtx.resume();
+    }
+
+    function endSession() {
+      if (!running) return;
+      running = false;
+      demoMode = false;
+      clearInterval(timerId);
+      demoOverlay.classList.remove('active');
+      modeTag.classList.remove('active');
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
+      statusTip.textContent = '本次 ' + jumpCount + ' 个，用时 ' + fmtTime(Date.now() - startTime);
+      // 写入数据
+      const today = formatDate(new Date());
+      data.dailyJumps[today] = (data.dailyJumps[today] || 0) + jumpCount;
+      data.totalJumps += jumpCount;
+      if (jumpCount > data.bestRecord) data.bestRecord = jumpCount;
+      saveData(data);
+      refreshStats();
+      if (jumpCount > 0) {
+        showToast('完成 ' + jumpCount + ' 个，继续加油！', 2000);
+        beep(660); setTimeout(beep, 150, 880); setTimeout(beep, 300, 1100);
+      }
+    }
+
+    startBtn.addEventListener('click', startSession);
+    stopBtn.addEventListener('click', endSession);
+    document.getElementById('demoBtn').addEventListener('click', startDemoSession);
+
+    // ============== 演示模式 ==============
+    function startDemoSession() {
+      if (running) return;
+      demoMode = true;
+      running = true;
+      cameraMask.classList.add('hidden');
+      demoOverlay.classList.add('active');
+      modeTag.classList.add('active');
+      jumpCount = 0;
+      countNum.textContent = '0';
+      demoCounter.textContent = '0';
+      startTime = Date.now();
+      timerOverlay.textContent = '00:00';
+      timerId = setInterval(updateTimer, 200);
+      startBtn.disabled = true;
+      stopBtn.disabled = false;
+      statusTip.textContent = '演示模式：点击屏幕 = 跳一次';
+      if (!audioCtx) { try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} }
+      else if (audioCtx.state === 'suspended') audioCtx.resume();
+    }
+
+    function onDemoTap(e) {
+      if (!running || !demoMode) return;
+      // 防止双击过快
+      const now = Date.now();
+      if (now - lastDemoTapTime < 200) return;
+      lastDemoTapTime = now;
+      jumpCount++;
+      countNum.textContent = jumpCount;
+      demoCounter.textContent = jumpCount;
+      beep(880 + Math.min(jumpCount * 5, 600));
+      spawnFloatNum();
+      demoOverlay.classList.add('tapped');
+      setTimeout(() => demoOverlay.classList.remove('tapped'), 100);
+      if (jumpCount === 10) showToast('加油！10 个啦');
+      else if (jumpCount === 50) { showToast('太棒了！50 个'); beep(1100); }
+      else if (jumpCount === 100) { showToast('超厉害！100 个！', 2000); beep(1320); }
+      else if (jumpCount === 200) { showToast('200 个！跳绳小达人！', 2000); beep(1500); }
+    }
+    demoOverlay.addEventListener('click', onDemoTap);
+
+    // 支持空格键快捷计数
+    document.addEventListener('keydown', (e) => {
+      if (e.code === 'Space' && running && demoMode) {
+        e.preventDefault();
+        onDemoTap();
+      }
+    });
+
+    // ============== 启动 ==============
+    async function boot() {
+      refreshStats();
+      try {
+        // 预加载 Pose 模型，让首次启动更快
+        await initPose();
+      } catch (e) {
+        console.warn('Pose 预加载失败，将在使用时重试', e);
+      }
+      // 隐藏加载页
+      setTimeout(() => loading.classList.add('hide'), 300);
+    }
+    boot();
+  })();
+  </script>
+</body>
+</html>
